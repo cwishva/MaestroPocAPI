@@ -25,7 +25,7 @@ function validateDate(dateStr) {
   const regex = /^\d{4}-\d{2}-\d{2}$/;
   if (!dateStr.match(regex)) return false;
   const date = new Date(dateStr);
-  return date instanceof Date && !isNaN(date);
+  return date instanceof Date && !isNaN(date.getTime());
 }
 
 // Get Amadeus token
@@ -980,7 +980,9 @@ app.post(
 
       if (!recommendations.length) {
         recommendations = [
-          { error: "No flights available matching preferences" },
+          {
+            error: "No flights available matching preferences",
+          } as unknown as any,
         ];
       }
 
@@ -1000,3 +1002,4 @@ app.post(
 app.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
 });
+export default app;
