@@ -437,6 +437,8 @@ const validateFlightQuery = [
     .withMessage("Nonstop must be a boolean"),
 ];
 
+app.get("/", [], (req, res) => res.send("Express on Vercel"));
+
 // GET /flights/economy
 app.get(
   "/flights/economy",
