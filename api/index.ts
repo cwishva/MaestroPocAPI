@@ -68,6 +68,7 @@ async function getSeatsAeroFlights(
         taxes: "YTotalTaxesRaw",
         direct: "YDirect",
         airline: "YAirlines",
+        airlinedirect: "YDirectAirlines",
       },
       business: {
         available: "JAvailable",
@@ -75,6 +76,7 @@ async function getSeatsAeroFlights(
         taxes: "JTotalTaxesRaw",
         direct: "JDirect",
         airline: "JAirlines",
+        airlinedirect: "JDirectAirlines",
       },
     };
 
@@ -88,29 +90,29 @@ async function getSeatsAeroFlights(
         start_date: date,
         end_date: date,
         take: 15,
-        order_by: "YMileageCostRaw",
+        //order_by: "YMileageCostRaw",
       },
       headers: {
         "Partner-Authorization": process.env.SEATS_AERO_API_KEY || "",
       },
     });
 
-    // console.log(
-    //   `Seats.aero outbound response for ${origin}-${destination} on ${date}:`,
-    //   JSON.stringify(outboundResponse.data, null, 2)
-    // );
+    console.log(
+      `Seats.aero outbound response for ${origin}-${destination} on ${date} in ${cabin} with nonstop ${nonstop}:`
+    );
 
     const outboundFlights = outboundResponse.data.data
       .filter(
         (flight) =>
-          flight[cabinFields.available] &&
-          (!nonstop || flight[cabinFields.direct]) &&
-          !flight[cabinFields.airline].includes(",")
+          flight[cabinFields.available] && flight[cabinFields.direct] == nonstop
+        //&& !flight[cabinFields.airline].includes(",")
       )
       .map((flight) => {
         const taxes_fees = flight[cabinFields.taxes] * CAD_TO_USD;
         return {
-          airline: flight[cabinFields.airline],
+          airline: nonstop
+            ? flight[cabinFields.airlinedirect]
+            : flight[cabinFields.airline],
           points: flight[cabinFields.cost],
           taxes_fees,
           direct: flight[cabinFields.direct],
@@ -155,13 +157,15 @@ async function getSeatsAeroFlights(
         .filter(
           (flight) =>
             flight[cabinFields.available] &&
-            (!nonstop || flight[cabinFields.direct]) &&
-            !flight[cabinFields.airline].includes(",")
+            flight[cabinFields.direct] == nonstop
+          //&& !flight[cabinFields.airline].includes(",")
         )
         .map((flight) => {
           const taxes_fees = flight[cabinFields.taxes] * CAD_TO_USD;
           return {
-            airline: flight[cabinFields.airline],
+            airline: nonstop
+              ? flight[cabinFields.airlinedirect]
+              : flight[cabinFields.airline],
             points: flight[cabinFields.cost],
             taxes_fees,
             direct: flight[cabinFields.direct],
@@ -181,6 +185,10 @@ async function getSeatsAeroFlights(
         });
     }
 
+    console.log(
+      `Seats.aero outbound flights for ${origin}-${destination} on ${date} in ${cabin} with nonstop ${nonstop}:`,
+      JSON.stringify(outboundFlights, null, 2)
+    );
     return { outboundFlights, returnFlights };
   } catch (error) {
     console.error(
@@ -920,6 +928,8 @@ app.post(
         }
       }
 
+      //console.log("All flights:", allFlights);
+
       // Filter by preferences
       const filteredFlights = allFlights.filter((flight) => {
         if (nonstop && !flight.direct) return false;
@@ -959,6 +969,7 @@ app.post(
           payment_type: "points",
           program: f.program,
         }));
+      console.log("Points recommendations:", pointsRecommendations);
 
       // Fallback to cash recommendation
       const cashRecommendation = cashFlights
