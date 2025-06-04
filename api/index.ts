@@ -69,6 +69,18 @@ async function getSeatsAeroFlights(
         direct: "YDirect",
         airline: "YAirlines",
         airlinedirect: "YDirectAirlines",
+        remainingSeats: "YRemainingSeats",
+        currency: "TaxesCurrency",
+      },
+      premiumeconomy: {
+        available: "WAvailable",
+        cost: "WMileageCostRaw",
+        taxes: "WTotalTaxesRaw",
+        direct: "WDirect",
+        airline: "WAirlines",
+        airlinedirect: "WDirectAirlines",
+        remainingSeats: "WRemainingSeats",
+        currency: "TaxesCurrency",
       },
       business: {
         available: "JAvailable",
@@ -77,6 +89,18 @@ async function getSeatsAeroFlights(
         direct: "JDirect",
         airline: "JAirlines",
         airlinedirect: "JDirectAirlines",
+        remainingSeats: "JRemainingSeats",
+        currency: "TaxesCurrency",
+      },
+      first: {
+        available: "FAvailable",
+        cost: "FMileageCostRaw",
+        taxes: "FTotalTaxesRaw",
+        direct: "FDirect",
+        airline: "FAirlines",
+        airlinedirect: "FDirectAirlines",
+        remainingSeats: "FRemainingSeats",
+        currency: "TaxesCurrency",
       },
     };
 
@@ -88,14 +112,16 @@ async function getSeatsAeroFlights(
       destination_airport: destination,
       start_date: date,
       end_date: date,
-      take: 15,
-      //order_by: "YMileageCostRaw",
+      only_direct_flights: nonstop,
+      order_by: "lowest_mileage",
+      include_trips: true,
+      take: 10,
     };
     console.log(
       `Seats.aero oneway params for ${destination}-${origin} on ${returnDate}:`,
       params
     );
-    const outboundResponse = await axios.get(`${SEATS_AERO_API}/availability`, {
+    const outboundResponse = await axios.get(`${SEATS_AERO_API}/search`, {
       params: params,
       headers: {
         "Partner-Authorization": process.env.SEATS_AERO_API_KEY || "",
@@ -114,86 +140,48 @@ async function getSeatsAeroFlights(
         //&& !flight[cabinFields.airline].includes(",")
       )
       .map((flight) => {
-        const taxes_fees = (flight[cabinFields.taxes] / 100) * CAD_TO_USD;
+        const taxes_fees =
+          flight[cabinFields.currency] !== "USD"
+            ? (flight[cabinFields.taxes] / 100) * CAD_TO_USD
+            : flight[cabinFields.taxes] / 100;
         return {
+          id: flight.ID,
           airline: nonstop
             ? flight[cabinFields.airlinedirect]
             : flight[cabinFields.airline],
-          points: flight[cabinFields.cost],
+          points_used: flight[cabinFields.cost],
           taxes_fees,
           direct: flight[cabinFields.direct],
           origin: flight.Route.OriginAirport,
           destination: flight.Route.DestinationAirport,
           departure_date: flight.Date,
           cabin: cabin,
-          seats_available:
-            flight[
-              `${cabinFields.available.replace(
-                "Available",
-                "RemainingSeatsRaw"
-              )}`
-            ] || 1,
+          seats_available: flight[cabinFields.remainingSeats],
           program: flight.Source,
+          trips: flight.AvailabilityTrips,
         };
       });
 
-    // Fetch return flights if returnDate is provided
+    // Fetch return flights if returnDate is provided self call
     let returnFlights = [];
     if (returnDate) {
-      const params = {
-        origin_airport: destination,
-        destination_airport: origin,
-        start_date: returnDate,
-        end_date: returnDate,
-        take: 15,
-        order_by: "YMileageCostRaw",
-      };
       console.log(
         `Seats.aero return params for ${destination}-${origin} on ${returnDate}:`,
         params
       );
-      const returnResponse = await axios.get(`${SEATS_AERO_API}/availability`, {
-        params: params,
-        headers: {
-          "Partner-Authorization": process.env.SEATS_AERO_API_KEY || "",
-        },
-      });
-
+      const returnResponse = await getSeatsAeroFlights(
+        destination,
+        origin,
+        returnDate,
+        cabin,
+        nonstop
+      );
       console.log(
         `Seats.aero return response for ${destination}-${origin} on ${returnDate}:`,
-        returnResponse.data.data.length
+        returnResponse.outboundFlights.length
       );
 
-      returnFlights = returnResponse.data.data
-        .filter(
-          (flight) =>
-            flight[cabinFields.available] &&
-            flight[cabinFields.direct] == nonstop
-          //&& !flight[cabinFields.airline].includes(",")
-        )
-        .map((flight) => {
-          const taxes_fees = (flight[cabinFields.taxes] / 100) * CAD_TO_USD;
-          return {
-            airline: nonstop
-              ? flight[cabinFields.airlinedirect]
-              : flight[cabinFields.airline],
-            points: flight[cabinFields.cost],
-            taxes_fees,
-            direct: flight[cabinFields.direct],
-            origin: flight.Route.OriginAirport,
-            destination: flight.Route.DestinationAirport,
-            departure_date: flight.Date,
-            cabin: cabin,
-            seats_available:
-              flight[
-                `${cabinFields.available.replace(
-                  "Available",
-                  "RemainingSeatsRaw"
-                )}`
-              ] || 1,
-            program: flight.Source,
-          };
-        });
+      returnFlights = returnResponse.outboundFlights;
     }
 
     console.log(
@@ -270,6 +258,11 @@ async function fetchCashFlights(token, params) {
             ? flight.itineraries[1].segments[0].departure.at.split("T")[0]
             : null,
         cabin: params.travelClass,
+        flightNumber:
+          flight.itineraries[0].segments[0].operating &&
+          flight.itineraries[0].segments[0].operating.carrierCode
+            ? `${flight.itineraries[0].segments[0].operating.carrierCode}${flight.itineraries[0].segments[0].number}`
+            : `${flight.itineraries[0].segments[0].carrierCode}${flight.itineraries[0].segments[0].number}`,
       }));
     } catch (error) {
       console.error(
@@ -474,7 +467,7 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
             return_date: cashFlight.return_date || returnDate,
             cpp: cashFlight.cash_price
               ? ((cashFlight.cash_price - award.taxes_fees) /
-                  ((adults + children) * award.points)) *
+                  ((adults + children) * award.points_used)) *
                 100
               : 0,
           };
@@ -510,7 +503,7 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
               arrival_time: cashFlight.arrival_time,
               // cpp:cashFlight.cash_price
               // ? ((cashFlight.cash_price - award.taxes_fees) /
-              //     ((adults + children) * award.points)) *
+              //     ((adults + children) * award.points_used)) *
               //   100
               // : 0,
             };
@@ -540,7 +533,7 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
               taxes_fees: outbound.taxes_fees + (returnFlight?.taxes_fees || 0),
               points_used:
                 (adults + children) *
-                outbound.points *
+                outbound.points_used *
                 (trip_type === "round" ? 2 : 1),
               return_departure_time: returnFlight
                 ? returnFlight.departure_time
@@ -595,7 +588,9 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
 
     // Get top 3 points-based recommendations
     const pointsRecommendations = filteredFlights
-      .filter((f) => points_balance.Amex + points_balance.Chase >= f.points)
+      .filter(
+        (f) => points_balance.Amex + points_balance.Chase >= f.points_used
+      )
       .sort((a, b) => b.cpp - a.cpp)
       .slice(0, 3)
       .map((f) => ({
