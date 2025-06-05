@@ -218,7 +218,7 @@ async function fetchCashFlights(token, params) {
               ? { returnDate: params.returnDate }
               : {}),
             currencyCode: "USD",
-            max: 5,
+            max: 10,
           },
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -438,7 +438,7 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
           const cashFlight = cashFlights.find(
             (cf) =>
               cf.airline === award.airline &&
-              cf.departure_date === award.departure_date &&
+              //cf.departure_date === award.departure_date &&
               cf.nonstop === award.direct &&
               cf.cabin.toUpperCase() === award.cabin.toUpperCase()
           ) || {
@@ -483,7 +483,7 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
             const cashFlight = cashFlights.find(
               (cf) =>
                 cf.airline === award.airline &&
-                cf.return_date === award.departure_date &&
+                //cf.return_date === award.departure_date &&
                 cf.nonstop === award.direct &&
                 cf.cabin.toUpperCase() === award.cabin.toUpperCase()
             ) || {
@@ -575,16 +575,17 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
     console.log("All flights:", allFlights.length);
 
     // Filter by preferences
-    const filteredFlights = allFlights.filter((flight) => {
-      if (nonstop && !flight.direct) return false;
-      if (arrival_departure === "flexible" || flight.departure_time === "N/A")
-        return true;
-      const departureHour = parseInt(flight.departure_time.split(":")[0]);
-      return arrival_departure === "morning_departure"
-        ? departureHour < 12
-        : departureHour >= 12;
-    });
-    console.log("Filtered flights:", filteredFlights);
+    // const filteredFlights = allFlights.filter((flight) => {
+    //   if (nonstop && !flight.direct) return false;
+    //   if (arrival_departure === "flexible" || flight.departure_time === "N/A")
+    //     return true;
+    //   const departureHour = parseInt(flight.departure_time.split(":")[0]);
+    //   return arrival_departure === "morning_departure"
+    //     ? departureHour < 12
+    //     : departureHour >= 12;
+    // });
+    //console.log("Filtered flights:", filteredFlights);
+    const filteredFlights = allFlights;
 
     // Get top 3 points-based recommendations
     const pointsRecommendations = filteredFlights
@@ -592,7 +593,7 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
         (f) => points_balance.Amex + points_balance.Chase >= f.points_used
       )
       .sort((a, b) => b.cpp - a.cpp)
-      .slice(0, 3)
+      .slice(0, 5)
       .map((f) => ({
         airline: f.airline,
         cabin: f.cabin,
