@@ -438,7 +438,7 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
           const cashFlight = cashFlights.find(
             (cf) =>
               cf.airline === award.airline &&
-              //cf.departure_date === award.departure_date &&
+              cf.departure_date === award.departure_date &&
               cf.nonstop === award.direct &&
               cf.cabin.toUpperCase() === award.cabin.toUpperCase()
           ) || {
@@ -483,7 +483,7 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
             const cashFlight = cashFlights.find(
               (cf) =>
                 cf.airline === award.airline &&
-                //cf.return_date === award.departure_date &&
+                cf.return_date === award.departure_date &&
                 cf.nonstop === award.direct &&
                 cf.cabin.toUpperCase() === award.cabin.toUpperCase()
             ) || {
