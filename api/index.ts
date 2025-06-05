@@ -474,6 +474,7 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
         })
         .filter((flight) => flight.cash_price);
 
+      //console.log("Outbound processed:", outboundProcessed);
       console.log("Outbound flights:", outboundProcessed.length);
       allFlights.push(...outboundProcessed);
 
