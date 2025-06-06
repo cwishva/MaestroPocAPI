@@ -113,6 +113,7 @@ async function getSeatsAeroFlights(
       start_date: date,
       end_date: date,
       only_direct_flights: nonstop,
+      cabin: cabin,
       order_by: "lowest_mileage",
       include_trips: true,
       take: 10,
@@ -137,65 +138,62 @@ async function getSeatsAeroFlights(
       .filter(
         (flight) =>
           flight[cabinFields.available] && flight[cabinFields.direct] == nonstop
-        //&& !flight[cabinFields.airline].includes(",")
       )
-      .map((flight) => {
-        const taxes_fees =
-          flight[cabinFields.currency] !== "USD"
-            ? (flight[cabinFields.taxes] / 100) * CAD_TO_USD
-            : flight[cabinFields.taxes] / 100;
+      .map((obj) => {
+        const trip = obj.AvailabilityTrips.find(
+          (trip) => trip.MileageCost === obj[cabinFields.cost]
+        );
+        const flightNumbers = trip.FlightNumbers.split(", ");
+        const lastFlightNumber = flightNumbers[flightNumbers.length - 1];
+        const cashPrice = mileageToCash(trip.MileageCost, trip.Source);
+
         return {
-          id: flight.ID,
-          airline: nonstop
-            ? flight[cabinFields.airlinedirect]
-            : flight[cabinFields.airline],
-          points_used: flight[cabinFields.cost],
-          taxes_fees,
-          direct: flight[cabinFields.direct],
-          origin: flight.Route.OriginAirport,
-          destination: flight.Route.DestinationAirport,
-          departure_date: flight.Date,
-          cabin: cabin,
-          seats_available: flight[cabinFields.remainingSeats],
-          program: flight.Source,
-          trips: flight.AvailabilityTrips,
+          id: trip.ID,
+          origin: trip.OriginAirport,
+          destination: trip.DestinationAirport,
+          airline: trip.Carriers.split(", ")[0],
+          nonstop: trip.Stops === 0,
+          departure_date: trip.DepartsAt,
+          arrival_date: trip.ArrivesAt,
+          return_departure_date: null,
+          return_arrival_date: null,
+          cabin: trip.Cabin.toUpperCase(),
+          flightNumber: lastFlightNumber,
+          // diff
+          cash_price: 0,
+          points_used: trip.MileageCost,
+          taxes_fees: trip.TotalTaxes,
+          seats_available: trip.RemainingSeats,
+          program: trip.Source,
+          type: "SeatsAero",
         };
       });
 
-    // Fetch return flights if returnDate is provided self call
-    let returnFlights = [];
-    if (returnDate) {
-      console.log(
-        `Seats.aero return params for ${destination}-${origin} on ${returnDate}:`,
-        params
-      );
-      const returnResponse = await getSeatsAeroFlights(
-        destination,
-        origin,
-        returnDate,
-        cabin,
-        nonstop
-      );
-      console.log(
-        `Seats.aero return response for ${destination}-${origin} on ${returnDate}:`,
-        returnResponse.outboundFlights.length
-      );
-
-      returnFlights = returnResponse.outboundFlights;
-    }
-
-    console.log(
-      `Seats.aero outbound/inbound flights for ${origin}-${destination} on ${date} in ${cabin} with nonstop ${nonstop}:`,
-      JSON.stringify({ outboundFlights, returnFlights }, null, 2)
-    );
-    return { outboundFlights, returnFlights };
+    return outboundFlights;
   } catch (error) {
     console.error(
       `Seats.aero error for ${origin}-${destination}:`,
       error.message
     );
-    return { outboundFlights: [], returnFlights: [] };
+    return [];
   }
+}
+
+function mileageToCash(mileageCost, program) {
+  const pointValues = {
+    american: 0.016,
+    qantas: 0.013,
+    united: 0.0135,
+    delta: 0.012,
+    ba: 0.013,
+    alaska: 0.018,
+  };
+  const pointValue = pointValues[program.toLowerCase()];
+  console.log("mileageToCash", mileageCost, program.toLowerCase(), pointValue);
+  if (!pointValue) {
+    return 0;
+  }
+  return mileageCost * pointValue;
 }
 
 // Fetch cash flights from Amadeus with fallback
@@ -230,32 +228,20 @@ async function fetchCashFlights(token, params) {
       );
 
       flights = response.data.data.map((flight) => ({
+        id: flight.id,
+        origin: flight.itineraries[0].segments[0].departure.iataCode,
+        destination: flight.itineraries[0].segments.at(-1).arrival.iataCode,
         airline: flight.itineraries[0].segments[0].carrierCode,
-        cash_price: parseFloat(flight.price.total),
         nonstop: flight.itineraries[0].segments.length === 1,
-        departure_time: flight.itineraries[0].segments[0].departure.at
-          .split("T")[1]
-          .slice(0, 5),
-        arrival_time: flight.itineraries[0].segments[0].arrival.at
-          .split("T")[1]
-          .slice(0, 5),
-        departure_date:
-          flight.itineraries[0].segments[0].departure.at.split("T")[0],
-        return_departure_time:
+        departure_date: flight.itineraries[0].segments[0].departure.at,
+        arrival_date: flight.itineraries[0].segments[0].arrival.at,
+        return_departure_date:
           params.tripType === "round" && flight.itineraries[1]
             ? flight.itineraries[1].segments[0].departure.at
-                .split("T")[1]
-                .slice(0, 5)
             : null,
-        return_arrival_time:
+        return_arrival_date:
           params.tripType === "round" && flight.itineraries[1]
             ? flight.itineraries[1].segments[0].arrival.at
-                .split("T")[1]
-                .slice(0, 5)
-            : null,
-        return_date:
-          params.tripType === "round" && flight.itineraries[1]
-            ? flight.itineraries[1].segments[0].departure.at.split("T")[0]
             : null,
         cabin: params.travelClass,
         flightNumber:
@@ -263,6 +249,13 @@ async function fetchCashFlights(token, params) {
           flight.itineraries[0].segments[0].operating.carrierCode
             ? `${flight.itineraries[0].segments[0].operating.carrierCode}${flight.itineraries[0].segments[0].number}`
             : `${flight.itineraries[0].segments[0].carrierCode}${flight.itineraries[0].segments[0].number}`,
+        // diff
+        cash_price: parseFloat(flight.price.total),
+        points_used: 0,
+        taxes_fees: 0,
+        seats_available: 0,
+        program: flight.Source,
+        type: "Amadeus",
       }));
     } catch (error) {
       console.error(
@@ -383,20 +376,6 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
       await getAmadeusToken();
     }
 
-    // Fetch cash flights
-    // const cashFlights = await fetchCashFlights(amadeusToken, {
-    //   origin,
-    //   destination,
-    //   departureDate,
-    //   returnDate,
-    //   adults,
-    //   children,
-    //   travelClass: preferred_cabin.includes("business")
-    //     ? "BUSINESS"
-    //     : "ECONOMY",
-    //   nonstop,
-    //   tripType: trip_type,
-    // });
     // Fetch cash flights for each cabin
     const cashFlightsNested = await Promise.all(
       preferred_cabin.map((cabin) =>
@@ -429,223 +408,10 @@ app.post("/flight-search", validateFlightQuery, async (req, res) => {
         )
       )
     );
+    const seatsAeroFlights = seatsAeroResults.flat();
+    const allFlights = [...cashFlights, ...seatsAeroFlights];
 
-    // Combine flights
-    let allFlights = [];
-    for (const { outboundFlights, returnFlights } of seatsAeroResults) {
-      const outboundProcessed = outboundFlights
-        .map((award) => {
-          const cashFlight = cashFlights.find(
-            (cf) =>
-              cf.airline === award.airline &&
-              cf.departure_date === award.departure_date &&
-              cf.nonstop === award.direct &&
-              cf.cabin.toUpperCase() === award.cabin.toUpperCase()
-          ) || {
-            cash_price: null,
-            departure_time: "N/A",
-            arrival_time: "N/A",
-            return_departure_time: null,
-            return_arrival_time: null,
-          };
-          // console.log(
-          //   "Cash flight map:",
-          //   award.airline,
-          //   award.departure_date,
-          //   award.direct,
-          //   award.cabin,
-          //   cashFlight
-          // );
-          return {
-            ...award,
-            cash_price: cashFlight.cash_price,
-            taxes_fees: award.taxes_fees,
-            departure_time: cashFlight.departure_time,
-            arrival_time: cashFlight.arrival_time,
-            return_departure_time: cashFlight.return_departure_time,
-            return_arrival_time: cashFlight.return_arrival_time,
-            return_date: cashFlight.return_date || returnDate,
-            cpp: cashFlight.cash_price
-              ? ((cashFlight.cash_price - award.taxes_fees) /
-                  ((adults + children) * award.points_used)) *
-                100
-              : 0,
-          };
-        })
-        .filter((flight) => flight.cash_price);
-
-      //console.log("Outbound processed:", outboundProcessed);
-      console.log("Outbound flights:", outboundProcessed.length);
-      allFlights.push(...outboundProcessed);
-
-      if (trip_type === "round" && allFlights.length > 0) {
-        const returnProcessed = returnFlights
-          .map((award) => {
-            const cashFlight = cashFlights.find(
-              (cf) =>
-                cf.airline === award.airline &&
-                cf.return_date === award.departure_date &&
-                cf.nonstop === award.direct &&
-                cf.cabin.toUpperCase() === award.cabin.toUpperCase()
-            ) || {
-              cash_price: null,
-              departure_time: "N/A",
-              arrival_time: "N/A",
-            };
-            //console.log("award", award);
-            // const taxes_fees = cashFlight.cash_price
-            //   ? Math.min(award.taxes_fees, cashFlight.cash_price * 0.1)
-            //   : award.taxes_fees;
-            return {
-              ...award,
-              cash_price: cashFlight.cash_price,
-              taxes_fees: award.taxes_fees,
-              departure_time: cashFlight.departure_time,
-              arrival_time: cashFlight.arrival_time,
-              // cpp:cashFlight.cash_price
-              // ? ((cashFlight.cash_price - award.taxes_fees) /
-              //     ((adults + children) * award.points_used)) *
-              //   100
-              // : 0,
-            };
-          })
-          .filter((flight) => flight.cash_price);
-
-        console.log("return flights:", returnProcessed.length);
-
-        // Match outbound and return flights
-        allFlights = allFlights
-          .map((outbound) => {
-            const returnFlight = returnProcessed.find(
-              (ret) =>
-                ret.airline === outbound.airline &&
-                ret.program === outbound.program &&
-                ret.cabin.toUpperCase() === outbound.cabin.toUpperCase()
-            );
-            console.log("return flight map:", returnFlight, outbound);
-            if (!returnFlight && trip_type === "round") return null;
-
-            console.log(
-              "taxes_fees:",
-              outbound.taxes_fees + (returnFlight?.taxes_fees || 0)
-            );
-            return {
-              ...outbound,
-              taxes_fees: outbound.taxes_fees + (returnFlight?.taxes_fees || 0),
-              points_used:
-                (adults + children) *
-                outbound.points_used *
-                (trip_type === "round" ? 2 : 1),
-              return_departure_time: returnFlight
-                ? returnFlight.departure_time
-                : outbound.return_departure_time || "N/A",
-              return_arrival_time: returnFlight
-                ? returnFlight.arrival_time
-                : outbound.return_arrival_time || "N/A",
-              return_date: returnFlight
-                ? returnFlight.departure_date
-                : outbound.return_date,
-            };
-          })
-          .filter((flight) => flight);
-
-        // const indexOut = allFlights.findIndex(
-        //   (f) =>
-        //     f.cabin?.toUpperCase() === returnMatchedFlights.cabin?.toUpperCase()
-        // );
-
-        // console.log(
-        //   "returnMatchedFlights:",
-        //   allFlights,
-        //   index,
-        //   returnMatchedFlights
-        // );
-        // if (index !== -1) {
-        //   allFlights[index] = { ...allFlights[index], ...returnMatchedFlights }; // replaces the whole object
-        // }
-
-        // allFlights = allFlights.map((flight) =>
-        //   flight.cabin?.toUpperCase() ===
-        //   returnMatchedFlights.cabin?.toUpperCase()
-        //     ? { ...flight, ...returnMatchedFlights }
-        //     : flight
-        // );
-      }
-    }
-
-    console.log("All flights:", allFlights.length);
-
-    // Filter by preferences
-    // const filteredFlights = allFlights.filter((flight) => {
-    //   if (nonstop && !flight.direct) return false;
-    //   if (arrival_departure === "flexible" || flight.departure_time === "N/A")
-    //     return true;
-    //   const departureHour = parseInt(flight.departure_time.split(":")[0]);
-    //   return arrival_departure === "morning_departure"
-    //     ? departureHour < 12
-    //     : departureHour >= 12;
-    // });
-    //console.log("Filtered flights:", filteredFlights);
-    const filteredFlights = allFlights;
-
-    // Get top 3 points-based recommendations
-    const pointsRecommendations = filteredFlights
-      .filter(
-        (f) => points_balance.Amex + points_balance.Chase >= f.points_used
-      )
-      .sort((a, b) => b.cpp - a.cpp)
-      .slice(0, 5)
-      .map((f) => ({
-        airline: f.airline,
-        cabin: f.cabin,
-        points_used: f.points_used,
-        cash_price: f.cash_price,
-        taxes_fees: f.taxes_fees,
-        cpp: f.cpp,
-        nonstop: f.direct,
-        departure_time: f.departure_time,
-        arrival_time: f.arrival_time,
-        departure_date: f.departure_date,
-        return_departure_time: f.return_departure_time,
-        return_arrival_time: f.return_arrival_time,
-        return_date: f.return_date,
-        transfer_from:
-          f.program === "aeroplan" || ["BA", "IB"].includes(f.airline)
-            ? "Amex"
-            : "Chase",
-        payment_type: "points",
-        program: f.program,
-      }));
-    console.log("Points recommendations:", pointsRecommendations);
-
-    // Fallback to cash recommendation
-    const cashRecommendation = cashFlights
-      .filter((f) => (nonstop ? f.nonstop : true))
-      .slice(0, 3)
-      .reduce(
-        (best, f) =>
-          !best.cash_price || f.cash_price < best.cash_price ? f : best,
-        { cash_price: Infinity, airline: "" }
-      );
-    console.log("Cash recommendation:", cashRecommendation);
-
-    let recommendations = pointsRecommendations;
-    if (cashRecommendation.airline && !pointsRecommendations.length) {
-      //if (cashRecommendation.airline) {
-      console.log("Cash recommendation:", cashRecommendation);
-      recommendations.push(cashRecommendation);
-    }
-
-    if (!recommendations.length) {
-      recommendations = [
-        {
-          error: "No flights available matching preferences",
-        } as unknown as any,
-      ];
-    }
-
-    console.log("Recommendations:", recommendations);
-    res.json({ cashFlights, seatsAeroResults, recommendations });
+    res.json({ allFlights });
   } catch (error) {
     console.error("Recommendation error:", error.message);
     res.status(500).json({
