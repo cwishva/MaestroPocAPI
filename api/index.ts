@@ -253,7 +253,7 @@ async function fetchCashFlights(token, params) {
         cash_price: parseFloat(flight.price.total),
         points_used: 0,
         taxes_fees: 0,
-        seats_available: 0,
+        seats_available: params.adults + params.children,
         program: flight.Source,
         type: "Amadeus",
       }));
